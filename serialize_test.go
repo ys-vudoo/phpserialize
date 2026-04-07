@@ -57,6 +57,13 @@ func getStdClassOnly() *phpserialize.MarshalOptions {
 	return stdClassOnly
 }
 
+func getMarshalStructAsMap() *phpserialize.MarshalOptions {
+	options := phpserialize.DefaultMarshalOptions()
+	options.MarshalStructAsMap = true
+
+	return options
+}
+
 // These tests have been adapted from the wonderful work at:
 // https://github.com/mitsuhiko/phpserialize/blob/master/tests.py
 var marshalTests = map[string]marshalTest{
@@ -147,10 +154,20 @@ var marshalTests = map[string]marshalTest{
 		[]byte("O:7:\"struct1\":3:{s:3:\"foo\";i:10;s:3:\"bar\";O:7:\"Struct2\":1:{s:3:\"qux\";d:1.23;}s:3:\"baz\";s:3:\"yay\";}"),
 		nil,
 	},
+	"struct1{Foo int, Bar Struct2{Qux float64}, hidden bool, Bar string} as map": {
+		struct1{10, Struct2{1.23}, true, "yay"},
+		[]byte("a:3:{s:3:\"Foo\";i:10;s:3:\"Bar\";a:1:{s:3:\"Qux\";d:1.23;}s:3:\"Baz\";s:3:\"yay\";}"),
+		getMarshalStructAsMap(),
+	},
 	"&struct1{Foo int, Bar Struct2{Qux float64}, hidden bool}": {
 		&struct1{20, Struct2{7.89}, false, "yay"},
 		[]byte("O:7:\"struct1\":3:{s:3:\"foo\";i:20;s:3:\"bar\";O:7:\"Struct2\":1:{s:3:\"qux\";d:7.89;}s:3:\"baz\";s:3:\"yay\";}"),
 		nil,
+	},
+	"&struct1{Foo int, Bar Struct2{Qux float64}, hidden bool} as map": {
+		&struct1{20, Struct2{7.89}, false, "yay"},
+		[]byte("a:3:{s:3:\"Foo\";i:20;s:3:\"Bar\";a:1:{s:3:\"Qux\";d:7.89;}s:3:\"Baz\";s:3:\"yay\";}"),
+		getMarshalStructAsMap(),
 	},
 
 	// encode object with array of objects
@@ -159,12 +176,22 @@ var marshalTests = map[string]marshalTest{
 		[]byte("O:7:\"Struct3\":4:{s:11:\"objectArray\";a:2:{i:0;O:7:\"Struct2\":1:{s:3:\"qux\";d:1.1;}i:1;O:7:\"Struct2\":1:{s:3:\"qux\";d:2.2;}}s:8:\"intArray\";a:2:{i:0;i:1;i:1;i:2;}s:10:\"floatArray\";a:2:{i:0;d:1;i:1;d:2;}s:11:\"stringArray\";a:2:{i:0;s:1:\"a\";i:1;s:1:\"b\";}}"),
 		nil,
 	},
+	"struct3{ObjectArray Struct2{Qux float64}, IntArray {1, 2}, FloatArray {1.0, 2.0}, StringArray {'a', 'b'}} as map": {
+		Struct3{[]Struct2{{1.1}, {2.2}}, []int64{1, 2}, []float64{1.0, 2.0}, []string{"a", "b"}},
+		[]byte("a:4:{s:11:\"ObjectArray\";a:2:{i:0;a:1:{s:3:\"Qux\";d:1.1;}i:1;a:1:{s:3:\"Qux\";d:2.2;}}s:8:\"IntArray\";a:2:{i:0;i:1;i:1;i:2;}s:10:\"FloatArray\";a:2:{i:0;d:1;i:1;d:2;}s:11:\"StringArray\";a:2:{i:0;s:1:\"a\";i:1;s:1:\"b\";}}"),
+		getMarshalStructAsMap(),
+	},
 
 	// encode object (struct with tags)
 	"structTag{Bar int, Foo Struct2{Qux float64}, hidden bool, Balu string, Nilptr <nil>}": {
 		structTag{Struct2{1.23}, 10, true, "yay", "", nil},
 		[]byte("O:9:\"structTag\":3:{s:3:\"bar\";O:7:\"Struct2\":1:{s:3:\"qux\";d:1.23;}s:3:\"foo\";i:10;s:3:\"baz\";s:3:\"yay\";}"),
 		nil,
+	},
+	"structTag{Bar int, Foo Struct2{Qux float64}, hidden bool, Balu string, Nilptr <nil>} as map": {
+		structTag{Struct2{1.23}, 10, true, "yay", "", nil},
+		[]byte("a:3:{s:3:\"bar\";a:1:{s:3:\"Qux\";d:1.23;}s:3:\"foo\";i:10;s:3:\"baz\";s:3:\"yay\";}"),
+		getMarshalStructAsMap(),
 	},
 
 	// stdClassOnly

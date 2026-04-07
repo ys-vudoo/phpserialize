@@ -15,6 +15,8 @@ type MarshalOptions struct {
 	// If this is true, then all struct names will be stripped from objects
 	// and "stdClass" will be used instead. The default value is false.
 	OnlyStdClass bool
+	// If this is true, then a struct will be marshalled as if it is a map.
+	MarshalStructAsMap bool
 }
 
 // DefaultMarshalOptions will create a new instance of MarshalOptions with
@@ -174,7 +176,10 @@ func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
 			visibleFieldCount--
 			continue
 		} else if fieldName == "" {
-			fieldName = lowerCaseFirstLetter(typeOfValue.Field(i).Name)
+			fieldName = typeOfValue.Field(i).Name
+			if !options.MarshalStructAsMap {
+				fieldName = lowerCaseFirstLetter(fieldName)
+			}
 		}
 		buffer.Write(MarshalString(fieldName))
 
@@ -184,6 +189,10 @@ func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
 		}
 
 		buffer.Write(m)
+	}
+
+	if options.MarshalStructAsMap {
+		return []byte(fmt.Sprintf("a:%d:{%s}", visibleFieldCount, buffer.String())), nil
 	}
 
 	className := reflect.ValueOf(input).Type().Name()
