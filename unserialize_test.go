@@ -456,6 +456,68 @@ func TestUnmarshalAssociativeArray(t *testing.T) {
 	}
 }
 
+func TestUnmarshalAssociativeArrayIntoStruct(t *testing.T) {
+	type struct1 struct {
+		Foo int `php:"foo"`
+		Bar float64
+	}
+
+	type struct2 struct {
+		One int64  `php:"1"`
+		Two string `php:"2"`
+	}
+
+	tests := map[string]struct {
+		input          []byte
+		result         interface{}
+		expectedOutput interface{}
+		expectedError  error
+	}{
+		"struct1{Foo: 10, Bar: 20.0": {
+			[]byte("a:2:{s:3:\"Bar\";i:20;s:3:\"foo\";i:10;}"),
+			struct1{},
+			struct1{Foo: 10, Bar: 20.0},
+			nil,
+		},
+		"map[interface{}]interface{}: {1: 10, 2: 'foo'}": {
+			[]byte("a:2:{i:1;i:10;i:2;s:3:\"foo\";}"),
+			struct2{},
+			struct2{One: 10, Two: "foo"},
+			nil,
+		},
+		// "map[interface{}]interface{}: {'foo': 10, 'bar': 20, 'foobar': {'foo': 10, 'bar': 20}}": {
+		// 	[]byte(`a:3:{s:3:"foo";i:10;s:3:"bar";i:20;s:6:"foobar";a:2:{s:3:"foo";i:10;s:3:"bar";i:20;}}`),
+		// 	map[interface{}]interface{}{"foo": int64(10), "bar": int64(20), "foobar": map[interface{}]interface{}{"foo": int64(10), "bar": int64(20)}},
+		// 	nil,
+		// },
+		// "map[interface{}]interface{}: {'foo': 10, 'bar': 20, 'foobar': {'foo': 10, 'bar': 20}, 'foobar1': {'foo': 10, 'bar': 20}}": {
+		// 	[]byte(`a:4:{s:3:"foo";i:10;s:3:"bar";i:20;s:6:"foobar";a:2:{s:3:"foo";i:10;s:3:"bar";i:20;}s:7:"foobar1";a:2:{s:3:"foo";i:10;s:3:"bar";i:20;}}`),
+		// 	map[interface{}]interface{}{"foo": int64(10), "bar": int64(20), "foobar": map[interface{}]interface{}{"foo": int64(10), "bar": int64(20)}, "foobar1": map[interface{}]interface{}{"foo": int64(10), "bar": int64(20)}},
+		// 	nil,
+		// },
+		// "not an array": {
+		// 	[]byte("N;"),
+		// 	map[interface{}]interface{}{},
+		// 	errors.New("not an array"),
+		// },
+	}
+
+	for testName, test := range tests {
+		t.Run(testName, func(t *testing.T) {
+			err := phpserialize.Unmarshal(test.input, &test.result)
+
+			if test.expectedError == nil {
+				expectErrorToNotHaveOccurred(t, err)
+				if !reflect.DeepEqual(test.result, test.expectedOutput) {
+					t.Errorf("Expected %+v, got %+v", test.expectedOutput, test.result)
+				}
+			} else {
+				expectErrorToEqual(t, err, test.expectedError)
+			}
+		})
+	}
+}
+
 var inputNull = []byte("N;")
 var inputBoolFalse = []byte("b:0;")
 var inputBoolTrue = []byte("b:1;")

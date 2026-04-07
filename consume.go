@@ -2,6 +2,7 @@ package phpserialize
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 )
@@ -182,13 +183,37 @@ func setField(structFieldValue reflect.Value, value interface{}) error {
 
 	switch structFieldValue.Type().Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		structFieldValue.SetInt(val.Int())
+		if val.CanInt() {
+			structFieldValue.SetInt(val.Int())
+		} else {
+			intVal, err := strconv.ParseInt(fmt.Sprintf("%v", val.Interface()), 10, 64)
+			if err != nil {
+				return err
+			}
+			structFieldValue.SetInt(intVal)
+		}
 
 	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		structFieldValue.SetUint(val.Uint())
+		if val.CanUint() {
+			structFieldValue.SetUint(val.Uint())
+		} else {
+			uintVal, err := strconv.ParseUint(fmt.Sprintf("%v", val.Interface()), 10, 64)
+			if err != nil {
+				return err
+			}
+			structFieldValue.SetUint(uintVal)
+		}
 
 	case reflect.Float32, reflect.Float64:
-		structFieldValue.SetFloat(val.Float())
+		if val.CanFloat() {
+			structFieldValue.SetFloat(val.Float())
+		} else {
+			floatVal, err := strconv.ParseFloat(fmt.Sprintf("%v", val.Interface()), 64)
+			if err != nil {
+				return err
+			}
+			structFieldValue.SetFloat(floatVal)
+		}
 
 	case reflect.Struct:
 		m := val.Interface().(map[interface{}]interface{})
@@ -216,10 +241,12 @@ func setField(structFieldValue reflect.Value, value interface{}) error {
 		}
 
 		structFieldValue.Set(arrayOfObjects)
+
 	case reflect.Ptr:
 		// Instantiate structFieldValue.
 		structFieldValue.Set(reflect.New(structFieldValue.Type().Elem()))
 		return setField(structFieldValue.Elem(), value)
+
 	default:
 		structFieldValue.Set(val)
 	}
@@ -338,6 +365,107 @@ func consumeAssociativeArray(data []byte, offset int) (map[interface{}]interface
 	}
 
 	return result, offset + 1, nil
+}
+
+func findField(obj reflect.Value, key string) (reflect.Value, error) {
+	if key == "" {
+		return reflect.ValueOf(nil), errors.New("key is empty")
+	}
+
+	tt := obj.Type()
+	for i := 0; i < obj.NumField(); i++ {
+		field := obj.Field(i)
+		if !field.IsValid() {
+			continue
+		}
+		if !field.CanSet() {
+			continue
+		}
+		tag := tt.Field(i).Tag.Get("php")
+		if tag == "-" {
+			continue
+		}
+		if key == tag || key == tt.Field(i).Name {
+			return field, nil
+		}
+	}
+
+	return reflect.ValueOf(nil), fmt.Errorf("field not found: %q", key)
+}
+
+func consumeAssociativeArrayIntoStruct(data []byte, offset int, v reflect.Value) (int, error) {
+	if !checkType(data, 'a', offset) {
+		return -1, errors.New("not an array")
+	}
+
+	// Skip over the "a:"
+	offset += 2
+
+	rawLength, offset := consumeStringUntilByte(data, ':', offset)
+	length, err := strconv.Atoi(rawLength)
+	if err != nil {
+		return -1, err
+	}
+
+	// Skip over the ":{"
+	offset += 2
+
+	for i := 0; i < length; i++ {
+		var key interface{}
+		key, offset, err = consumeNext(data, offset)
+		if err != nil {
+			return -1, err
+		}
+
+		strKey := fmt.Sprintf("%v", key)
+
+		field, err := findField(v, strKey)
+		if err != nil {
+			return -1, err
+		}
+
+		offset, err = consumeNextIntoField(data, offset, field)
+		if err != nil {
+			return -1, err
+		}
+	}
+
+	return offset + 1, nil
+}
+
+func consumeNextIntoField(data []byte, offset int, field reflect.Value) (int, error) {
+	switch field.Type().Kind() {
+	case reflect.Struct:
+		var err error
+		if checkType(data, 'a', offset) {
+			_, err = consumeAssociativeArrayIntoStruct(data, offset, field)
+		} else {
+			_, err = consumeObject(data, offset, field)
+		}
+		if err != nil {
+			return -1, err
+		}
+
+	case reflect.Slice:
+
+	case reflect.Ptr:
+		field.Set(reflect.New(field.Type().Elem()))
+		return consumeNextIntoField(data, offset, field.Elem())
+
+	default:
+		// simple field
+		var value interface{}
+		var err error
+		value, offset, err = consumeNext(data, offset)
+		if err != nil {
+			return -1, err
+		}
+		if err := setField(field, value); err != nil {
+			return -1, err
+		}
+	}
+
+	return offset, nil
 }
 
 func consumeIndexedArray(data []byte, offset int) ([]interface{}, int, error) {

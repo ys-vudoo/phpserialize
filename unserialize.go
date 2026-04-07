@@ -118,6 +118,11 @@ func UnmarshalAssociativeArray(data []byte) (map[interface{}]interface{}, error)
 }
 
 func UnmarshalObject(data []byte, v reflect.Value) error {
+	if checkType(data, 'a', 0) {
+		_, err := consumeAssociativeArrayIntoStruct(data, 0, v)
+		return err
+	}
+
 	_, err := consumeObject(data, 0, v)
 	return err
 }
