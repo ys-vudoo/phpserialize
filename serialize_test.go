@@ -1,9 +1,10 @@
 package phpserialize_test
 
 import (
-	"github.com/elliotchance/phpserialize"
 	"reflect"
 	"testing"
+
+	"github.com/elliotchance/phpserialize"
 )
 
 var heyStr = "hey"
