@@ -456,6 +456,177 @@ func TestUnmarshalAssociativeArray(t *testing.T) {
 	}
 }
 
+func TestUnmarshalAssociativeArrayIntoStruct(t *testing.T) {
+	type Struct1 struct {
+		Foo int `php:"foo"`
+		Bar float64
+	}
+
+	type Struct2 struct {
+		One int64  `php:"0"`
+		Two string `php:"1"`
+	}
+
+	type FooBar struct {
+		Foo uint64 `php:"foo"`
+		Bar int64  `php:"bar"`
+	}
+
+	type Struct3 struct {
+		FooBar
+		FooBarField FooBar `php:"foobar"`
+	}
+
+	type Struct4 struct {
+		Uints   []uint64
+		FooBars []FooBar `php:"foobars"`
+		Any     []interface{}
+	}
+
+	type Struct5 struct {
+		Foo *int `php:"foo"`
+		Bar *float64
+	}
+	var foo int = 10
+	var bar float64 = 20
+
+	type Struct6 struct {
+		One *int64  `php:"0"`
+		Two *string `php:"1"`
+	}
+	var one int64 = 10
+	var two string = "foo"
+
+	type Struct7 struct {
+		*FooBar
+		FooBarField *FooBar `php:"foobar"`
+	}
+
+	type Struct8 struct {
+		FooBars1 []*FooBar
+		FooBars2 *[]FooBar
+		FooBars3 *[]*FooBar
+	}
+
+	type AString string
+	type ABool bool
+	type Binary []byte
+	type Strings []AString
+	type Permissions map[string]Strings
+	type Struct9 struct {
+		String      AString
+		Bool        ABool
+		Binary      Binary
+		Permissions Permissions
+	}
+
+	type Struct10 struct {
+		Map map[string]string
+	}
+
+	tests := map[string]struct {
+		input          []byte
+		result         interface{}
+		expectedOutput interface{}
+		expectedError  error
+	}{
+		`Simple struct`: {
+			[]byte(`a:2:{s:3:"Bar";i:20;s:3:"foo";d:10;}`),
+			&Struct1{},
+			Struct1{Foo: 10, Bar: 20.0},
+			nil,
+		},
+		`Indexed list`: {
+			[]byte(`a:2:{i:0;i:10;i:1;s:3:"foo";}`),
+			&Struct2{},
+			Struct2{One: 10, Two: "foo"},
+			nil,
+		},
+		`Structs in struct`: {
+			[]byte(`a:3:{s:3:"foo";i:10;s:3:"bar";i:20;s:6:"foobar";a:2:{s:3:"foo";i:30;s:3:"bar";i:40;}}`),
+			&Struct3{},
+			Struct3{FooBar: FooBar{Foo: 10, Bar: 20}, FooBarField: FooBar{Foo: 30, Bar: 40}},
+			nil,
+		},
+		`Slices in struct`: {
+			[]byte(`a:3:{s:7:"foobars";a:2:{i:0;a:2:{s:3:"foo";i:30;s:3:"bar";i:40;}i:1;a:2:{s:3:"foo";i:50;s:3:"bar";i:60;}}s:5:"Uints";a:2:{i:0;i:10;i:1;i:20;}s:3:"Any";a:2:{i:0;i:30;i:1;s:5:"forty";}}`),
+			&Struct4{},
+			Struct4{Uints: []uint64{10, 20}, FooBars: []FooBar{{Foo: 30, Bar: 40}, {Foo: 50, Bar: 60}}, Any: []interface{}{int64(30), "forty"}},
+			nil,
+		},
+		`Not an object`: {
+			[]byte(`N;`),
+			&Struct1{},
+			nil,
+			errors.New("not an object"),
+		},
+		`Simple struct with pointers`: {
+			[]byte(`a:2:{s:3:"Bar";i:20;s:3:"foo";d:10;}`),
+			&Struct5{},
+			Struct5{Foo: &foo, Bar: &bar},
+			nil,
+		},
+		`Indexed list with pointers`: {
+			[]byte(`a:2:{i:0;i:10;i:1;s:3:"foo";}`),
+			&Struct6{},
+			Struct6{One: &one, Two: &two},
+			nil,
+		},
+		`Structs in struct with pointers`: {
+			[]byte(`a:3:{s:3:"foo";i:10;s:3:"bar";i:20;s:6:"foobar";a:2:{s:3:"foo";i:30;s:3:"bar";i:40;}}`),
+			&Struct7{},
+			Struct7{FooBar: &FooBar{Foo: 10, Bar: 20}, FooBarField: &FooBar{Foo: 30, Bar: 40}},
+			nil,
+		},
+		`Slices in struct with pointers`: {
+			[]byte(`a:3:{s:8:"FooBars1";a:2:{i:0;a:2:{s:3:"foo";i:10;s:3:"bar";i:20;}i:1;a:2:{s:3:"foo";i:30;s:3:"bar";i:40;}}s:8:"FooBars2";a:2:{i:0;a:2:{s:3:"foo";i:50;s:3:"bar";i:60;}i:1;a:2:{s:3:"foo";i:70;s:3:"bar";i:80;}}s:8:"FooBars3";a:2:{i:0;a:2:{s:3:"foo";i:90;s:3:"bar";i:100;}i:1;a:2:{s:3:"foo";i:110;s:3:"bar";i:120;}}}`),
+			&Struct8{},
+			Struct8{
+				FooBars1: []*FooBar{{Foo: 10, Bar: 20}, {Foo: 30, Bar: 40}},
+				FooBars2: &[]FooBar{{Foo: 50, Bar: 60}, {Foo: 70, Bar: 80}},
+				FooBars3: &[]*FooBar{{Foo: 90, Bar: 100}, {Foo: 110, Bar: 120}},
+			},
+			nil,
+		},
+		`Type alias`: {
+			[]byte("a:4:{s:6:\"String\";s:3:\"foo\";s:4:\"Bool\";b:1;s:6:\"Binary\";s:3:\"\x01\x02\x03\";s:11:\"Permissions\";a:1:{s:1:\"k\";a:2:{i:0;s:2:\"v1\";i:1;s:2:\"v2\";}}}"),
+			&Struct9{},
+			Struct9{
+				String:      "foo",
+				Bool:        true,
+				Binary:      []byte{1, 2, 3},
+				Permissions: map[string]Strings{"k": {"v1", "v2"}},
+			},
+			nil,
+		},
+		`Map in struct`: {
+			[]byte("a:1:{s:3:\"Map\";a:1:{s:3:\"foo\";s:3:\"bar\";}}"),
+			&Struct10{},
+			Struct10{
+				Map: map[string]string{"foo": "bar"},
+			},
+			nil,
+		},
+	}
+
+	for testName, test := range tests {
+		t.Run(testName, func(t *testing.T) {
+
+			err := phpserialize.Unmarshal(test.input, test.result)
+
+			if test.expectedError == nil {
+				expectErrorToNotHaveOccurred(t, err)
+				result := reflect.ValueOf(test.result).Elem().Interface()
+				if !reflect.DeepEqual(result, test.expectedOutput) {
+					t.Errorf("Expected %+v, got %+v", test.expectedOutput, result)
+				}
+			} else {
+				expectErrorToEqual(t, err, test.expectedError)
+			}
+		})
+	}
+}
+
 var inputNull = []byte("N;")
 var inputBoolFalse = []byte("b:0;")
 var inputBoolTrue = []byte("b:1;")
@@ -654,6 +825,52 @@ func TestUnmarshalArrayThatContainsObject(t *testing.T) {
 		},
 		int64(8),
 		int64(9),
+	}
+
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("Expected:\n  %#+v\nGot:\n  %#+v", expected, result)
+	}
+}
+
+func TestUnmarshalArrayToSliceOfStructs(t *testing.T) {
+	type struct1 struct {
+		Foo int  `php:"foo"`
+		Bar *int `php:"bar"`
+	}
+
+	data := `a:3:{i:0;a:2:{s:3:"foo";i:1;s:3:"bar";i:2;}i:1;a:2:{s:3:"foo";i:3;s:3:"bar";i:4;}i:2;a:2:{s:3:"foo";i:5;s:3:"bar";i:6;}}`
+	var result []struct1
+	err := phpserialize.Unmarshal([]byte(data), &result)
+	expectErrorToNotHaveOccurred(t, err)
+
+	expected := []struct1{
+		{Foo: 1, Bar: new(int)},
+		{Foo: 3, Bar: new(int)},
+		{Foo: 5, Bar: new(int)},
+	}
+	*expected[0].Bar = 2
+	*expected[1].Bar = 4
+	*expected[2].Bar = 6
+
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("Expected:\n  %#+v\nGot:\n  %#+v", expected, result)
+	}
+}
+
+func TestUnmarshalArrayToSliceOfStructPtrs(t *testing.T) {
+	type struct1 struct {
+		Foo int `php:"foo"`
+	}
+
+	data := `a:3:{i:0;a:1:{s:3:"foo";i:1;}i:1;a:1:{s:3:"foo";i:2;}i:2;a:1:{s:3:"foo";i:3;}}`
+	var result []*struct1
+	err := phpserialize.Unmarshal([]byte(data), &result)
+	expectErrorToNotHaveOccurred(t, err)
+
+	expected := []*struct1{
+		{Foo: 1},
+		{Foo: 2},
+		{Foo: 3},
 	}
 
 	if !reflect.DeepEqual(result, expected) {

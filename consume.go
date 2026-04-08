@@ -2,7 +2,9 @@ package phpserialize
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 )
 
@@ -182,44 +184,120 @@ func setField(structFieldValue reflect.Value, value interface{}) error {
 
 	switch structFieldValue.Type().Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		structFieldValue.SetInt(val.Int())
+		if val.CanInt() {
+			structFieldValue.SetInt(val.Int())
+		} else {
+			intVal, err := strconv.ParseInt(fmt.Sprintf("%v", val.Interface()), 10, 64)
+			if err != nil {
+				return err
+			}
+			structFieldValue.SetInt(intVal)
+		}
 
 	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		structFieldValue.SetUint(val.Uint())
+		if val.CanUint() {
+			structFieldValue.SetUint(val.Uint())
+		} else {
+			uintVal, err := strconv.ParseUint(fmt.Sprintf("%v", val.Interface()), 10, 64)
+			if err != nil {
+				return err
+			}
+			structFieldValue.SetUint(uintVal)
+		}
 
 	case reflect.Float32, reflect.Float64:
-		structFieldValue.SetFloat(val.Float())
+		if val.CanFloat() {
+			structFieldValue.SetFloat(val.Float())
+		} else {
+			floatVal, err := strconv.ParseFloat(fmt.Sprintf("%v", val.Interface()), 64)
+			if err != nil {
+				return err
+			}
+			structFieldValue.SetFloat(floatVal)
+		}
 
 	case reflect.Struct:
 		m := val.Interface().(map[interface{}]interface{})
-		fillStruct(structFieldValue, m)
+		return fillStruct(structFieldValue, m)
 
 	case reflect.Slice:
 		l := val.Len()
+		if l == 0 {
+			break
+		}
+
 		arrayOfObjects := reflect.MakeSlice(structFieldValue.Type(), l, l)
 
 		for i := 0; i < l; i++ {
 			if m, ok := val.Index(i).Interface().(map[interface{}]interface{}); ok {
 				obj := arrayOfObjects.Index(i)
-				fillStruct(obj, m)
-			} else {
-				switch arrayOfObjects.Index(i).Kind() {
-				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-					arrayOfObjects.Index(i).SetInt(val.Index(i).Elem().Int())
-				case reflect.Float32, reflect.Float64:
-					arrayOfObjects.Index(i).SetFloat(val.Index(i).Elem().Float())
-				default:
-					arrayOfObjects.Index(i).Set(val.Index(i).Elem())
+				if obj.Kind() == reflect.Ptr {
+					obj.Set(reflect.New(obj.Type().Elem()))
+					obj = obj.Elem()
 				}
-
+				if err := setField(obj, m); err != nil {
+					return err
+				}
+			} else {
+				if err := setField(arrayOfObjects.Index(i), val.Index(i).Interface()); err != nil {
+					return err
+				}
 			}
 		}
 
 		structFieldValue.Set(arrayOfObjects)
+
+	case reflect.Map:
+		l := val.Len()
+		if l == 0 {
+			break
+		}
+
+		mapType := structFieldValue.Type()
+
+		mapOfObjects := reflect.MakeMapWithSize(mapType, l)
+
+		// Go randomises maps. To be able to test this we need to make sure the
+		// map keys always come out in the same order. So we sort them first.
+		mapKeys := val.MapKeys()
+		sort.Slice(mapKeys, func(i, j int) bool {
+			return lessValue(mapKeys[i], mapKeys[j])
+		})
+
+		for _, k := range mapKeys {
+			kValue := reflect.New(mapType.Key()).Elem()
+			if err := setField(kValue, k.Interface()); err != nil {
+				return err
+			}
+
+			v := val.MapIndex(k)
+			vValue := reflect.New(mapType.Elem()).Elem()
+			if err := setField(vValue, v.Interface()); err != nil {
+				return err
+			}
+
+			mapOfObjects.SetMapIndex(kValue, vValue)
+		}
+
+		structFieldValue.Set(mapOfObjects)
+
 	case reflect.Ptr:
 		// Instantiate structFieldValue.
 		structFieldValue.Set(reflect.New(structFieldValue.Type().Elem()))
 		return setField(structFieldValue.Elem(), value)
+
+	case reflect.String:
+		var str string
+		if val.CanInterface() {
+			str = fmt.Sprintf("%v", val.Interface())
+		} else {
+			str = val.String()
+		}
+		structFieldValue.SetString(str)
+
+	case reflect.Bool:
+		structFieldValue.SetBool(val.Bool())
+
 	default:
 		structFieldValue.Set(val)
 	}
@@ -235,16 +313,36 @@ func fillStruct(obj reflect.Value, m map[interface{}]interface{}) error {
 		if !field.CanSet() {
 			continue
 		}
-		var key string
-		if tag := tt.Field(i).Tag.Get("php"); tag == "-" {
+
+		fieldType := tt.Field(i)
+
+		if fieldType.Anonymous {
+			// embedded struct
+			if err := setField(field, m); err != nil {
+				return err
+			}
 			continue
-		} else if tag != "" {
-			key = tag
-		} else {
-			key = lowerCaseFirstLetter(tt.Field(i).Name)
 		}
-		if v, ok := m[key]; ok {
-			setField(field, v)
+		tag := fieldType.Tag.Get("php")
+		if v, ok := m[tag]; tag != "" && ok {
+			if err := setField(field, v); err != nil {
+				return err
+			}
+			continue
+		}
+		fieldName := fieldType.Name
+		lowerCaseFieldName := lowerCaseFirstLetter(fieldName)
+		if v, ok := m[lowerCaseFieldName]; ok {
+			if err := setField(field, v); err != nil {
+				return err
+			}
+			continue
+		}
+		if v, ok := m[fieldName]; ok {
+			if err := setField(field, v); err != nil {
+				return err
+			}
+			continue
 		}
 	}
 
@@ -340,6 +438,15 @@ func consumeAssociativeArray(data []byte, offset int) (map[interface{}]interface
 	return result, offset + 1, nil
 }
 
+func consumeAssociativeArrayIntoStruct(data []byte, offset int, v reflect.Value) (int, error) {
+	m, offset, err := consumeAssociativeArray(data, offset)
+	if err != nil {
+		return -1, err
+	}
+
+	return offset, fillStruct(v, stringifyKeys(m).(map[interface{}]interface{}))
+}
+
 func consumeIndexedArray(data []byte, offset int) ([]interface{}, int, error) {
 	if !checkType(data, 'a', offset) {
 		return []interface{}{}, -1, errors.New("not an array")
@@ -380,4 +487,61 @@ func consumeIndexedArray(data []byte, offset int) ([]interface{}, int, error) {
 
 	// The +1 is for the final '}'
 	return result, offset + 1, nil
+}
+
+func consumeIndexedArrayIntoStruct(data []byte, offset int, v reflect.Value) (int, error) {
+	s, offset, err := consumeIndexedArray(data, offset)
+	if err != nil {
+		return -1, err
+	}
+
+	s = stringifyKeys(s).([]interface{})
+
+	l := len(s)
+	arrayOfObjects := reflect.MakeSlice(v.Type(), l, l)
+
+	for i := 0; i < l; i++ {
+		if m, ok := s[i].(map[interface{}]interface{}); ok {
+			obj := arrayOfObjects.Index(i)
+			if obj.Kind() == reflect.Ptr {
+				obj.Set(reflect.New(obj.Type().Elem()))
+				obj = obj.Elem()
+			}
+			if err := setField(obj, m); err != nil {
+				return -1, err
+			}
+		} else {
+			if err := setField(arrayOfObjects.Index(i), s[i]); err != nil {
+				return -1, err
+			}
+		}
+	}
+
+	v.Set(arrayOfObjects)
+
+	return offset, nil
+}
+
+// stringifyKeys recursively casts map keys into a real string but
+// still stored as type interface{}, so the output still can be used
+// in fillStruct() because it assumes a map[interface{}]interface{}.
+func stringifyKeys(in interface{}) interface{} {
+	switch x := in.(type) {
+	case []interface{}:
+		newSlice := make([]interface{}, len(x))
+		for i, v := range x {
+			newSlice[i] = stringifyKeys(v)
+		}
+		return newSlice
+
+	case map[interface{}]interface{}:
+		newMap := map[interface{}]interface{}{}
+		for k, v := range x {
+			newMap[fmt.Sprintf("%v", k)] = stringifyKeys(v)
+		}
+		return newMap
+
+	default:
+		return in
+	}
 }

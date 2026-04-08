@@ -118,6 +118,11 @@ func UnmarshalAssociativeArray(data []byte) (map[interface{}]interface{}, error)
 }
 
 func UnmarshalObject(data []byte, v reflect.Value) error {
+	if checkType(data, 'a', 0) {
+		_, err := consumeAssociativeArrayIntoStruct(data, 0, v)
+		return err
+	}
+
 	_, err := consumeObject(data, 0, v)
 	return err
 }
@@ -167,15 +172,27 @@ func Unmarshal(data []byte, v interface{}) error {
 		value.SetString(v)
 
 	case reflect.Slice:
+		elemType := value.Type().Elem()
+
 		// uint8 is an alias for byte. This means we are trying to pull
 		// a binary string out.
-		if value.Type().Elem().Kind() == reflect.Uint8 {
+		if elemType.Kind() == reflect.Uint8 {
 			v, err := UnmarshalBytes(data)
 			if err != nil {
 				return err
 			}
 
 			value.SetBytes(v)
+			return nil
+		}
+
+		if elemType.Kind() == reflect.Struct ||
+			(elemType.Kind() == reflect.Ptr && elemType.Elem().Kind() == reflect.Struct) {
+			_, err := consumeIndexedArrayIntoStruct(data, 0, value)
+			if err != nil {
+				return err
+			}
+
 			return nil
 		}
 
