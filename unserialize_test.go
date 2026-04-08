@@ -392,7 +392,7 @@ func TestUnmarshalArray(t *testing.T) {
 					t.Errorf("Expected %v, got %v", len(result), len(test.output))
 				}
 
-				for k, _ := range result {
+				for k := range result {
 					if !reflect.DeepEqual(result[k], test.output[k]) {
 						t.Errorf("Expected %v (%s), got %v (%s) for #%d",
 							result[k], reflect.TypeOf(result[k]).Name(),
@@ -487,7 +487,7 @@ func TestUnmarshalAssociativeArrayIntoStruct(t *testing.T) {
 		Foo *int `php:"foo"`
 		Bar *float64
 	}
-	var foo int = 10
+	foo := 10
 	var bar float64 = 20
 
 	type Struct6 struct {
@@ -495,7 +495,7 @@ func TestUnmarshalAssociativeArrayIntoStruct(t *testing.T) {
 		Two *string `php:"1"`
 	}
 	var one int64 = 10
-	var two string = "foo"
+	two := "foo"
 
 	type Struct7 struct {
 		*FooBar
@@ -611,7 +611,6 @@ func TestUnmarshalAssociativeArrayIntoStruct(t *testing.T) {
 
 	for testName, test := range tests {
 		t.Run(testName, func(t *testing.T) {
-
 			err := phpserialize.Unmarshal(test.input, test.result)
 
 			if test.expectedError == nil {
@@ -627,9 +626,11 @@ func TestUnmarshalAssociativeArrayIntoStruct(t *testing.T) {
 	}
 }
 
-var inputNull = []byte("N;")
-var inputBoolFalse = []byte("b:0;")
-var inputBoolTrue = []byte("b:1;")
+var (
+	inputNull      = []byte("N;")
+	inputBoolFalse = []byte("b:0;")
+	inputBoolTrue  = []byte("b:1;")
+)
 
 func TestUnmarshalWithNull(t *testing.T) {
 	result := interface{}(nil)
@@ -740,7 +741,6 @@ func TestUnmarshalPointers(t *testing.T) {
 	if result.BarPtr == nil || result.BarPtr.Qux != result.BarPtr.Qux {
 		t.Errorf("Expected %v, got %v for BarPtr", target.BarPtr, result.BarPtr)
 	}
-
 }
 
 func TestUnmarshalPointersWithNull(t *testing.T) {

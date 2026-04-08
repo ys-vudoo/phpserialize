@@ -31,12 +31,12 @@ func DefaultMarshalOptions() *MarshalOptions {
 // MarshalBool returns the bytes to represent a PHP serialized bool value. This
 // would be the equivalent to running:
 //
-//     echo serialize(false);
-//     // b:0;
+//	echo serialize(false);
+//	// b:0;
 //
 // The same result would be returned by marshalling a boolean value:
 //
-//     Marshal(true)
+//	Marshal(true)
 func MarshalBool(value bool) []byte {
 	if value {
 		return []byte("b:1;")
@@ -48,63 +48,73 @@ func MarshalBool(value bool) []byte {
 // MarshalInt returns the bytes to represent a PHP serialized integer value.
 // This would be the equivalent to running:
 //
-//     echo serialize(123);
-//     // i:123;
+//	echo serialize(123);
+//	// i:123;
 //
 // The same result would be returned by marshalling an integer value:
 //
-//     Marshal(123)
+//	Marshal(123)
 func MarshalInt(value int64) []byte {
-	return []byte("i:" + strconv.FormatInt(value, 10) + ";")
+	return append(strconv.AppendInt([]byte("i:"), value, 10), ';')
 }
 
 // MarshalUint is provided for compatibility with unsigned types in Go. It works
 // the same way as MarshalInt.
 func MarshalUint(value uint64) []byte {
-	return []byte("i:" + strconv.FormatUint(value, 10) + ";")
+	return append(strconv.AppendUint([]byte("i:"), value, 10), ';')
 }
 
 // MarshalFloat returns the bytes to represent a PHP serialized floating-point
 // value. This would be the equivalent to running:
 //
-//     echo serialize(1.23);
-//     // d:1.23;
+//	echo serialize(1.23);
+//	// d:1.23;
 //
 // The bitSize should represent the size of the float. This makes conversion to
 // a string value more accurate, for example:
 //
-//     // float64 is implicit for literals
-//     MarshalFloat(1.23, 64)
+//	// float64 is implicit for literals
+//	MarshalFloat(1.23, 64)
 //
-//     // If the original value was cast from a float32
-//     f := float32(1.23)
-//     MarshalFloat(float64(f), 32)
+//	// If the original value was cast from a float32
+//	f := float32(1.23)
+//	MarshalFloat(float64(f), 32)
 //
 // The same result would be returned by marshalling a floating-point value:
 //
-//     Marshal(1.23)
+//	Marshal(1.23)
 func MarshalFloat(value float64, bitSize int) []byte {
-	return []byte("d:" + strconv.FormatFloat(value, 'f', -1, bitSize) + ";")
+	return append(strconv.AppendFloat([]byte("d:"), value, 'f', -1, bitSize), ';')
 }
 
 // MarshalString returns the bytes to represent a PHP serialized string value.
 // This would be the equivalent to running:
 //
-//     echo serialize('Hello world');
-//     // s:11:"Hello world";
+//	echo serialize('Hello world');
+//	// s:11:"Hello world";
 //
 // The same result would be returned by marshalling a string value:
 //
-//     Marshal('Hello world')
+//	Marshal('Hello world')
 //
 // One important distinction is that PHP stores binary data in strings. See
 // MarshalBytes for more information.
 func MarshalString(value string) []byte {
+	var buffer bytes.Buffer
+	marshalString(value, &buffer)
+	return buffer.Bytes()
+}
+
+func marshalString(value string, buffer *bytes.Buffer) {
 	// As far as I can tell only the single-quote is escaped. Not even the
 	// backslash itself is escaped. Weird. See escapeTests for more information.
-	value = strings.Replace(value, "'", "\\'", -1)
+	value = strings.ReplaceAll(value, "'", "\\'")
 
-	return []byte(fmt.Sprintf("s:%d:\"%s\";", len(value), value))
+	buffer.WriteString(`s:`)
+	buffer.WriteString(strconv.FormatUint(uint64(len(value)), 10))
+	buffer.WriteString(`:"`)
+	buffer.WriteString(value)
+	buffer.WriteString(`";`)
 }
 
 // MarshalBytes returns the bytes to represent a PHP serialized string value
@@ -117,18 +127,23 @@ func MarshalString(value string) []byte {
 // string.
 func MarshalBytes(value []byte) []byte {
 	var buffer bytes.Buffer
-	for _, c := range value {
-		buffer.WriteString(fmt.Sprintf("\\x%02x", c))
-	}
+	marshalBytes(value, &buffer)
+	return buffer.Bytes()
+}
 
-	return []byte(fmt.Sprintf("s:%d:\"%s\";", len(value), buffer.String()))
+func marshalBytes(value []byte, buffer *bytes.Buffer) {
+	fmt.Fprintf(buffer, "s:%d:\"", len(value))
+	for _, c := range value {
+		fmt.Fprintf(buffer, "\\x%02x", c)
+	}
+	buffer.WriteString("\";")
 }
 
 // MarshalNil returns the bytes to represent a PHP serialized null value.
 // This would be the equivalent to running:
 //
-//     echo serialize(null);
-//     // N;
+//	echo serialize(null);
+//	// N;
 //
 // Unlike the other specific Marshal functions it does not take an argument
 // because the output is a constant value.
@@ -145,6 +160,14 @@ func MarshalNil() []byte {
 // name are maintained. At the moment there is no way to change this behaviour,
 // unlike other marshallers that use a tag on the field.
 func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := marshalStruct(input, options, &buffer); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+func marshalStruct(input interface{}, options *MarshalOptions, buffer *bytes.Buffer) error {
 	value := reflect.ValueOf(input)
 	typeOfValue := value.Type()
 
@@ -152,7 +175,8 @@ func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
 	// need to make sure we count all the visible ones for the final result.
 	visibleFieldCount := 0
 
-	var buffer bytes.Buffer
+	var writes [](func() error)
+
 	for i := 0; i < value.NumField(); i++ {
 		f := value.Field(i)
 
@@ -181,33 +205,49 @@ func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
 				fieldName = lowerCaseFirstLetter(fieldName)
 			}
 		}
-		buffer.Write(MarshalString(fieldName))
 
-		m, err := Marshal(f.Interface(), options)
-		if err != nil {
-			return nil, err
-		}
-
-		buffer.Write(m)
+		// need to do write to buffer later after visibleFieldCount calculated
+		writes = append(writes, func() error {
+			buffer.Write(MarshalString(fieldName))
+			if err := marshal(f.Interface(), options, buffer); err != nil {
+				return err
+			}
+			return nil
+		})
 	}
 
 	if options.MarshalStructAsMap {
-		return []byte(fmt.Sprintf("a:%d:{%s}", visibleFieldCount, buffer.String())), nil
+		fmt.Fprintf(buffer, "a:%d:{", visibleFieldCount)
+	} else {
+		className := reflect.ValueOf(input).Type().Name()
+		if options.OnlyStdClass {
+			className = "stdClass"
+		}
+		fmt.Fprintf(buffer, "O:%d:\"%s\":%d:{", len(className), className, visibleFieldCount)
 	}
 
-	className := reflect.ValueOf(input).Type().Name()
-	if options.OnlyStdClass {
-		className = "stdClass"
+	for _, w := range writes {
+		if err := w(); err != nil {
+			return err
+		}
 	}
 
-	return []byte(fmt.Sprintf("O:%d:\"%s\":%d:{%s}", len(className),
-		className, visibleFieldCount, buffer.String())), nil
+	buffer.WriteString("}")
+
+	return nil
 }
 
 // Marshal is the canonical way to perform the equivalent of serialize() in PHP.
 // It can handle encoding scalar types, slices and maps.
 func Marshal(input interface{}, options *MarshalOptions) ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := marshal(input, options, &buffer); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
 
+func marshal(input interface{}, options *MarshalOptions, buffer *bytes.Buffer) error {
 	if options == nil {
 		options = DefaultMarshalOptions()
 	}
@@ -215,82 +255,89 @@ func Marshal(input interface{}, options *MarshalOptions) ([]byte, error) {
 	// []byte is a special case because all strings (binary and otherwise)
 	// are handled as strings in PHP.
 	if bytesToEncode, ok := input.([]byte); ok {
-		return MarshalBytes(bytesToEncode), nil
+		marshalBytes(bytesToEncode, buffer)
+		return nil
 	}
 
 	// Nil is another special case because it is typeless and must be
 	// handled before trying to determine the type.
 	if input == nil {
-		return MarshalNil(), nil
+		buffer.Write(MarshalNil())
+		return nil
 	}
 
 	// Otherwise we need to decide if it is a scalar value, map or slice.
 	value := reflect.ValueOf(input)
 	switch value.Kind() {
 	case reflect.Bool:
-		return MarshalBool(value.Bool()), nil
+		buffer.Write(MarshalBool(value.Bool()))
+		return nil
 
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
-		reflect.Int64:
-		return MarshalInt(value.Int()), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		buffer.Write(MarshalInt(value.Int()))
+		return nil
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return MarshalUint(value.Uint()), nil
+		buffer.Write(MarshalUint(value.Uint()))
+		return nil
 
 	case reflect.Float32:
-		return MarshalFloat(value.Float(), 32), nil
+		buffer.Write(MarshalFloat(value.Float(), 32))
+		return nil
 
 	case reflect.Float64:
-		return MarshalFloat(value.Float(), 64), nil
+		buffer.Write(MarshalFloat(value.Float(), 64))
+		return nil
 
 	case reflect.String:
-		return MarshalString(value.String()), nil
+		buffer.Write(MarshalString(value.String()))
+		return nil
 
 	case reflect.Slice:
-		return marshalSlice(value.Interface(), options)
+		return marshalSlice(value.Interface(), options, buffer)
 
 	case reflect.Map:
-		return marshalMap(value.Interface(), options)
+		return marshalMap(value.Interface(), options, buffer)
 
 	case reflect.Struct:
-		return MarshalStruct(input, options)
+		return marshalStruct(input, options, buffer)
 
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if value.IsNil() {
-			return MarshalNil(), nil
+			buffer.Write(MarshalNil())
+			return nil
 		}
-		return Marshal(value.Elem().Interface(), options)
+		return marshal(value.Elem().Interface(), options, buffer)
 
 	default:
-		return nil, fmt.Errorf("can not encode: %T", input)
+		return fmt.Errorf("can not encode: %T", input)
 	}
 }
 
-func marshalSlice(input interface{}, options *MarshalOptions) ([]byte, error) {
+func marshalSlice(input interface{}, options *MarshalOptions, buffer *bytes.Buffer) error {
 	s := reflect.ValueOf(input)
 
-	var buffer bytes.Buffer
+	fmt.Fprintf(buffer, "a:%d:{", s.Len())
+
 	for i := 0; i < s.Len(); i++ {
-		m, err := Marshal(i, options)
-		if err != nil {
-			return nil, err
+		if err := marshal(i, options, buffer); err != nil {
+			return err
 		}
 
-		buffer.Write(m)
-
-		m, err = Marshal(s.Index(i).Interface(), options)
-		if err != nil {
-			return nil, err
+		if err := marshal(s.Index(i).Interface(), options, buffer); err != nil {
+			return err
 		}
-
-		buffer.Write(m)
 	}
 
-	return []byte(fmt.Sprintf("a:%d:{%s}", s.Len(), buffer.String())), nil
+	buffer.WriteString("}")
+
+	return nil
 }
 
-func marshalMap(input interface{}, options *MarshalOptions) ([]byte, error) {
+func marshalMap(input interface{}, options *MarshalOptions, buffer *bytes.Buffer) error {
 	s := reflect.ValueOf(input)
+
+	fmt.Fprintf(buffer, "a:%d:{", s.Len())
 
 	// Go randomises maps. To be able to test this we need to make sure the
 	// map keys always come out in the same order. So we sort them first.
@@ -299,24 +346,19 @@ func marshalMap(input interface{}, options *MarshalOptions) ([]byte, error) {
 		return lessValue(mapKeys[i], mapKeys[j])
 	})
 
-	var buffer bytes.Buffer
 	for _, mapKey := range mapKeys {
-		m, err := Marshal(mapKey.Interface(), options)
-		if err != nil {
-			return nil, err
+		if err := marshal(mapKey.Interface(), options, buffer); err != nil {
+			return err
 		}
 
-		buffer.Write(m)
-
-		m, err = Marshal(s.MapIndex(mapKey).Interface(), options)
-		if err != nil {
-			return nil, err
+		if err := marshal(s.MapIndex(mapKey).Interface(), options, buffer); err != nil {
+			return err
 		}
-
-		buffer.Write(m)
 	}
 
-	return []byte(fmt.Sprintf("a:%d:{%s}", s.Len(), buffer.String())), nil
+	buffer.WriteString("}")
+
+	return nil
 }
 
 func lowerCaseFirstLetter(s string) string {

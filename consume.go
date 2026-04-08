@@ -112,7 +112,8 @@ func consumeBool(data []byte, offset int) (bool, int, error) {
 }
 
 func consumeObjectAsMap(data []byte, offset int) (
-	map[interface{}]interface{}, int, error) {
+	map[interface{}]interface{}, int, error,
+) {
 	result := map[interface{}]interface{}{}
 
 	// Read the class name. The class name follows the same format as a
