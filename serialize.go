@@ -145,6 +145,11 @@ func MarshalNil() []byte {
 // name are maintained. At the moment there is no way to change this behaviour,
 // unlike other marshallers that use a tag on the field.
 func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
+	_, m, err := marshalStruct(input, options, false)
+	return m, err
+}
+
+func marshalStruct(input interface{}, options *MarshalOptions, embeded bool) (int, []byte, error) {
 	value := reflect.ValueOf(input)
 	typeOfValue := value.Type()
 
@@ -155,44 +160,69 @@ func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
 	var buffer bytes.Buffer
 	for i := 0; i < value.NumField(); i++ {
 		f := value.Field(i)
+		ft := typeOfValue.Field(i)
 
 		if !f.CanInterface() {
 			// This is an unexported field, we cannot read it.
 			continue
 		}
 
-		visibleFieldCount++
+		fieldName, fieldOptions := parseTag(ft.Tag.Get("php"))
+		if fieldOptions.Contains("omitnilptr") && f.Kind() == reflect.Ptr && f.IsNil() {
+			continue
+		}
+		if fieldName == "-" {
+			continue
+		}
 
-		fieldName, fieldOptions := parseTag(typeOfValue.Field(i).Tag.Get("php"))
+		if ft.Anonymous && options.MarshalStructAsMap {
+			if f.Kind() == reflect.Struct {
+				// the field is embedded struct
+				fields, m, err := marshalStruct(f.Interface(), options, true)
+				if err != nil {
+					return -1, nil, err
+				}
+				buffer.Write(m)
+				visibleFieldCount += fields
+				continue
+			}
 
-		if fieldOptions.Contains("omitnilptr") {
-			if f.Kind() == reflect.Ptr && f.IsNil() {
-				visibleFieldCount--
+			if f.Kind() == reflect.Ptr && f.Elem().Kind() == reflect.Struct {
+				// the field is embedded struct ptr
+				fields, m, err := marshalStruct(f.Elem().Interface(), options, true)
+				if err != nil {
+					return -1, nil, err
+				}
+				buffer.Write(m)
+				visibleFieldCount += fields
 				continue
 			}
 		}
 
-		if fieldName == "-" {
-			visibleFieldCount--
-			continue
-		} else if fieldName == "" {
-			fieldName = typeOfValue.Field(i).Name
+		visibleFieldCount++
+
+		if fieldName == "" {
+			fieldName = ft.Name
 			if !options.MarshalStructAsMap {
 				fieldName = lowerCaseFirstLetter(fieldName)
 			}
 		}
+
 		buffer.Write(MarshalString(fieldName))
 
 		m, err := Marshal(f.Interface(), options)
 		if err != nil {
-			return nil, err
+			return -1, nil, err
 		}
 
 		buffer.Write(m)
 	}
 
 	if options.MarshalStructAsMap {
-		return []byte(fmt.Sprintf("a:%d:{%s}", visibleFieldCount, buffer.String())), nil
+		if embeded {
+			return visibleFieldCount, buffer.Bytes(), nil
+		}
+		return visibleFieldCount, []byte(fmt.Sprintf("a:%d:{%s}", visibleFieldCount, buffer.String())), nil
 	}
 
 	className := reflect.ValueOf(input).Type().Name()
@@ -200,14 +230,14 @@ func MarshalStruct(input interface{}, options *MarshalOptions) ([]byte, error) {
 		className = "stdClass"
 	}
 
-	return []byte(fmt.Sprintf("O:%d:\"%s\":%d:{%s}", len(className),
-		className, visibleFieldCount, buffer.String())), nil
+	return visibleFieldCount,
+		[]byte(fmt.Sprintf("O:%d:\"%s\":%d:{%s}", len(className), className, visibleFieldCount, buffer.String())),
+		nil
 }
 
 // Marshal is the canonical way to perform the equivalent of serialize() in PHP.
 // It can handle encoding scalar types, slices and maps.
 func Marshal(input interface{}, options *MarshalOptions) ([]byte, error) {
-
 	if options == nil {
 		options = DefaultMarshalOptions()
 	}

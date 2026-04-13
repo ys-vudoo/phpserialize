@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-var (
-	heyStr = "hey"
-)
+var heyStr = "hey"
 
 type struct1 struct {
 	Foo    int
@@ -42,6 +40,30 @@ type Nillable struct {
 	Bar    Struct2
 	FooPtr *string
 	BarPtr *Struct2
+}
+
+type Foo struct {
+	Foo int
+}
+
+type Bar struct {
+	Foo
+	Bar int
+}
+
+type WithEmbed struct {
+	Bar
+	Baz int
+}
+
+type BarPtr struct {
+	*Foo
+	Bar int
+}
+
+type WithEmbedPtr struct {
+	*BarPtr
+	Baz int
 }
 
 type marshalTest struct {
@@ -167,6 +189,16 @@ var marshalTests = map[string]marshalTest{
 	"&struct1{Foo int, Bar Struct2{Qux float64}, hidden bool} as map": {
 		&struct1{20, Struct2{7.89}, false, "yay"},
 		[]byte("a:3:{s:3:\"Foo\";i:20;s:3:\"Bar\";a:1:{s:3:\"Qux\";d:7.89;}s:3:\"Baz\";s:3:\"yay\";}"),
+		getMarshalStructAsMap(),
+	},
+	"WithEmbed{Bar: Bar{Foo: Foo{Foo:10}, Bar:20}, Baz: 30} as map": {
+		WithEmbed{Bar: Bar{Foo: Foo{Foo: 10}, Bar: 20}, Baz: 30},
+		[]byte("a:3:{s:3:\"Foo\";i:10;s:3:\"Bar\";i:20;s:3:\"Baz\";i:30;}"),
+		getMarshalStructAsMap(),
+	},
+	"WithEmbedPtr{Embeded: &Embeded{Foo: 10}, Bar: 20} as map": {
+		WithEmbedPtr{BarPtr: &BarPtr{Foo: &Foo{Foo: 10}, Bar: 20}, Baz: 30},
+		[]byte("a:3:{s:3:\"Foo\";i:10;s:3:\"Bar\";i:20;s:3:\"Baz\";i:30;}"),
 		getMarshalStructAsMap(),
 	},
 
