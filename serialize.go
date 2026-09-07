@@ -106,10 +106,6 @@ func MarshalString(value string) []byte {
 }
 
 func marshalString(value string, buffer *bytes.Buffer) {
-	// As far as I can tell only the single-quote is escaped. Not even the
-	// backslash itself is escaped. Weird. See escapeTests for more information.
-	value = strings.ReplaceAll(value, "'", "\\'")
-
 	buffer.WriteString(`s:`)
 	buffer.WriteString(strconv.FormatUint(uint64(len(value)), 10))
 	buffer.WriteString(`:"`)

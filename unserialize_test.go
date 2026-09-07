@@ -940,7 +940,7 @@ var escapeTests = map[string]struct {
 	Unserialized, Serialized string
 }{
 	"SingleQuote": {
-		"foo'bar", `s:8:"foo\'bar";`,
+		"foo'bar", `s:7:"foo'bar";`,
 	},
 	"DoubleQuote": {
 		"foo\"bar", `s:7:"foo"bar";`,
